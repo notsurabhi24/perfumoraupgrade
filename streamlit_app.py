@@ -1,56 +1,179 @@
 import streamlit as st
-import bcrypt
 import pandas as pd
+import hashlib
+import bcrypt
 
-# Assuming you have a basic user data storage for login
-users = {}
+# Load the users and history CSV files (if they exist)
+try:
+    users_df = pd.read_csv("users.csv")
+except FileNotFoundError:
+    users_df = pd.DataFrame(columns=["username", "password", "email"])
+
+try:
+    history_df = pd.read_csv("history.csv")
+except FileNotFoundError:
+    history_df = pd.DataFrame(columns=["username", "history"])
 
 # Function to hash passwords
 def hash_password(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
-# Function to check if password matches
-def check_password(stored_hash, password):
-    return bcrypt.checkpw(password.encode('utf-8'), stored_hash)
+# Function to check if the password is correct
+def check_password(stored_password, input_password):
+    return bcrypt.checkpw(input_password.encode('utf-8'), stored_password.encode('utf-8'))
 
-# Sample user data (for testing purposes, remove in production)
-users["testuser"] = {
-    "password": hash_password("testpassword"),  # Hash the password
-    "email": "testuser@example.com",
-    "history": []  # User's history (will be populated after login)
-}
+# Register the user
+def register_user(username, password, email):
+    if username in users_df['username'].values:
+        return False  # User already exists
+    hashed_pw = hash_password(password)
+    new_user = pd.DataFrame({"username": [username], "password": [hashed_pw], "email": [email]})
+    global users_df
+    users_df = pd.concat([users_df, new_user], ignore_index=True)
+    users_df.to_csv("users.csv", index=False)
+    # Create initial history entry for the user
+    history_df = pd.DataFrame({"username": [username], "history": ['']})
+    global history_df
+    history_df = pd.concat([history_df, history_df], ignore_index=True)
+    history_df.to_csv("history.csv", index=False)
+    return True
 
-# Login Page function
+# Save the user's answers and recommended perfumes into the history
+def save_user_history(username, answers, recommended_perfumes):
+    history_data = {
+        "username": username,
+        "history": f"Answers: {answers}, Recommended: {recommended_perfumes}"
+    }
+    global history_df
+    history_df = history_df.append(history_data, ignore_index=True)
+    history_df.to_csv("history.csv", index=False)
+
+# App title
+st.set_page_config(page_title="Perfume Matchmaker", layout="centered")
+st.title("🌸 Perfume Personality Matchmaker")
+
+# Session state init
+if 'step' not in st.session_state:
+    st.session_state.step = 1
+if 'answers' not in st.session_state:
+    st.session_state.answers = {}
+if 'user_logged_in' not in st.session_state:
+    st.session_state.user_logged_in = False
+if 'username' not in st.session_state:
+    st.session_state.username = ""
+
+# Switch between Registration and Login pages
 def login_page():
-    st.title("Login")
-    
-    username = st.text_input("Username")
-    password = st.text_input("Password", type='password')
-    
-    if st.button("Login"):
-        # Check if user exists
-        if username in users:
-            # Check if the password is correct
-            if check_password(users[username]["password"], password):
-                st.session_state.logged_in = True
-                st.session_state.username = username
-                st.success(f"Welcome back, {username}!")
-                # Instead of rerunning, you could move to the main page or show the data
-                st.experimental_rerun()  # You can keep this, but handle it carefully
-            else:
-                st.error("Incorrect password. Please try again.")
-        else:
-            st.error("User not found. Please register.")
-    
-    if st.session_state.get("logged_in", False):
+    if not st.session_state.user_logged_in:
+        login_or_register = st.radio("Login or Register", ["Login", "Register"])
+        
+        if login_or_register == "Login":
+            st.subheader("Login")
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            if st.button("Login"):
+                if username in users_df['username'].values:
+                    user_data = users_df[users_df["username"] == username].iloc[0]
+                    if check_password(user_data['password'], password):
+                        st.session_state.user_logged_in = True
+                        st.session_state.username = username
+                        st.success("Logged in successfully!")
+                    else:
+                        st.error("Incorrect password.")
+                else:
+                    st.error("User does not exist.")
+        
+        elif login_or_register == "Register":
+            st.subheader("Register")
+            username = st.text_input("Username")
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            confirm_password = st.text_input("Confirm Password", type="password")
+            
+            if st.button("Register"):
+                if password == confirm_password:
+                    if register_user(username, password, email):
+                        st.session_state.user_logged_in = True
+                        st.session_state.username = username
+                        st.success("Registered and logged in successfully!")
+                    else:
+                        st.error("Username already exists.")
+                else:
+                    st.error("Passwords do not match.")
+    else:
         st.write(f"Logged in as {st.session_state.username}")
-        # Show user history or other relevant data
-        st.write("Your history:")
-        st.write(users[st.session_state.username]["history"])
+        st.button("Logout", on_click=logout)
 
-# Main app logic
-if "logged_in" not in st.session_state:
-    login_page()
-else:
-    # You can display the main content after successful login
-    st.write("Main content here")
+# Logout function
+def logout():
+    st.session_state.user_logged_in = False
+    st.session_state.username = ""
+    st.session_state.answers = {}
+    st.session_state.step = 1
+    st.experimental_rerun()
+
+# Main logic for perfume recommendations (steps from your previous code)
+def perfume_recommender():
+    if st.session_state.user_logged_in:
+        if st.session_state.step == 1:
+            st.subheader("Step 1: What's your current vibe?")
+            mood = st.radio("", ["Romantic", "Bold", "Fresh", "Mysterious", "Cozy", "Energetic"])
+            if st.button("Next ➡️"):
+                st.session_state.answers["mood"] = mood
+                st.session_state.step += 1
+                st.experimental_rerun()
+
+        elif st.session_state.step == 2:
+            st.subheader("Step 2: What's the occasion?")
+            occasion = st.radio("", ["Everyday Wear", "Date Night", "Work", "Party"])
+            if st.button("Next ➡️"):
+                st.session_state.answers["occasion"] = occasion
+                st.session_state.step += 1
+                st.experimental_rerun()
+
+        elif st.session_state.step == 3:
+            st.subheader("Step 3: What kind of notes do you love?")
+            notes = st.multiselect("Pick a few that speak to your soul 💫", 
+                                ["Vanilla", "Oud", "Citrus", "Floral", "Spicy", "Woody", "Sweet", "Musky"])
+            if st.button("Get My Recommendations 💖"):
+                st.session_state.answers["notes"] = notes
+                st.session_state.step += 1
+                st.experimental_rerun()
+
+        elif st.session_state.step == 4:
+            st.subheader("💐 Based on your vibe, you might love these:")
+            
+            mood = st.session_state.answers["mood"]
+            occasion = st.session_state.answers["occasion"]
+            notes = st.session_state.answers["notes"]
+            
+            query_keywords = [mood, occasion] + notes
+            query_string = "|".join(query_keywords)
+            
+            # Filter the perfumes based on the query
+            df = pd.read_csv("final_perfume_data.csv")
+            results = df[df["Description"].str.contains(query_string, case=False, na=False)]
+
+            if not results.empty:
+                recommended_perfumes = []
+                for _, row in results.head(5).iterrows():
+                    recommended_perfumes.append(f"**{row['Name']}** by *{row['Brand']}*")
+                    if pd.notna(row["Image URL"]):
+                        st.image(row["Image URL"], width=180)
+                    st.write(row["Description"])
+                    st.markdown("---")
+
+                # Save the user's answers and recommended perfumes to history
+                save_user_history(st.session_state.username, st.session_state.answers, recommended_perfumes)
+            else:
+                st.error("No perfect match found 😢 Try a different mood or notes!")
+
+            if st.button("🔄 Start Over"):
+                st.session_state.step = 1
+                st.session_state.answers = {}
+                st.experimental_rerun()
+    else:
+        login_page()
+
+# Run the app
+perfume_recommender()
