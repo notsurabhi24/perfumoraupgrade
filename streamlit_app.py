@@ -109,7 +109,6 @@ def logout():
     st.session_state.username = ""
     st.session_state.answers = {}
     st.session_state.step = 1
-    st.experimental_rerun()
 
 # Main logic for perfume recommendations (steps from your previous code)
 def perfume_recommender():
@@ -120,7 +119,6 @@ def perfume_recommender():
             if st.button("Next ➡️"):
                 st.session_state.answers["mood"] = mood
                 st.session_state.step += 1
-                st.experimental_rerun()
 
         elif st.session_state.step == 2:
             st.subheader("Step 2: What's the occasion?")
@@ -128,7 +126,6 @@ def perfume_recommender():
             if st.button("Next ➡️"):
                 st.session_state.answers["occasion"] = occasion
                 st.session_state.step += 1
-                st.experimental_rerun()
 
         elif st.session_state.step == 3:
             st.subheader("Step 3: What kind of notes do you love?")
@@ -137,7 +134,6 @@ def perfume_recommender():
             if st.button("Get My Recommendations 💖"):
                 st.session_state.answers["notes"] = notes
                 st.session_state.step += 1
-                st.experimental_rerun()
 
         elif st.session_state.step == 4:
             st.subheader("💐 Based on your vibe, you might love these:")
@@ -150,29 +146,4 @@ def perfume_recommender():
             query_string = "|".join(query_keywords)
             
             # Filter the perfumes based on the query
-            df = pd.read_csv("final_perfume_data.csv")
-            results = df[df["Description"].str.contains(query_string, case=False, na=False)]
-
-            if not results.empty:
-                recommended_perfumes = []
-                for _, row in results.head(5).iterrows():
-                    recommended_perfumes.append(f"**{row['Name']}** by *{row['Brand']}*")
-                    if pd.notna(row["Image URL"]):
-                        st.image(row["Image URL"], width=180)
-                    st.write(row["Description"])
-                    st.markdown("---")
-
-                # Save the user's answers and recommended perfumes to history
-                save_user_history(st.session_state.username, st.session_state.answers, recommended_perfumes)
-            else:
-                st.error("No perfect match found 😢 Try a different mood or notes!")
-
-            if st.button("🔄 Start Over"):
-                st.session_state.step = 1
-                st.session_state.answers = {}
-                st.experimental_rerun()
-    else:
-        login_page()
-
-# Run the app
-perfume_recommender()
+            df
