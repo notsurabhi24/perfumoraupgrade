@@ -24,27 +24,26 @@ def check_password(stored_password, input_password):
 
 # Register the user
 def register_user(username, password, email):
+    global users_df, history_df
     if username in users_df['username'].values:
         return False  # User already exists
     hashed_pw = hash_password(password)
     new_user = pd.DataFrame({"username": [username], "password": [hashed_pw], "email": [email]})
-    global users_df
     users_df = pd.concat([users_df, new_user], ignore_index=True)
     users_df.to_csv("users.csv", index=False)
     # Create initial history entry for the user
-    history_df = pd.DataFrame({"username": [username], "history": ['']})
-    global history_df
-    history_df = pd.concat([history_df, history_df], ignore_index=True)
+    history_data = pd.DataFrame({"username": [username], "history": ['']})
+    history_df = pd.concat([history_df, history_data], ignore_index=True)
     history_df.to_csv("history.csv", index=False)
     return True
 
 # Save the user's answers and recommended perfumes into the history
 def save_user_history(username, answers, recommended_perfumes):
+    global history_df
     history_data = {
         "username": username,
         "history": f"Answers: {answers}, Recommended: {recommended_perfumes}"
     }
-    global history_df
     history_df = history_df.append(history_data, ignore_index=True)
     history_df.to_csv("history.csv", index=False)
 
