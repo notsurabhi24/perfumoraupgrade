@@ -2,6 +2,10 @@ import streamlit as st
 import pandas as pd
 import bcrypt
 
+# Global variables initialization (try reading from CSV or create empty DataFrame)
+users_df = pd.DataFrame(columns=["username", "password", "email"])
+history_df = pd.DataFrame(columns=["username", "history"])
+
 # Try to load the existing CSV files or create empty ones
 try:
     users_df = pd.read_csv("users.csv")
@@ -23,23 +27,23 @@ def check_password(stored_password, input_password):
 
 # Register the user
 def register_user(username, password, email):
+    global users_df  # Declare global to modify users_df
     if username in users_df['username'].values:
         return False  # User already exists
     hashed_pw = hash_password(password)
     new_user = pd.DataFrame({"username": [username], "password": [hashed_pw], "email": [email]})
-    global users_df
     users_df = pd.concat([users_df, new_user], ignore_index=True)
     users_df.to_csv("users.csv", index=False)
     # Create initial history entry for the user
     history_data = pd.DataFrame({"username": [username], "history": ['']})
-    global history_df
+    global history_df  # Declare global to modify history_df
     history_df = pd.concat([history_df, history_data], ignore_index=True)
     history_df.to_csv("history.csv", index=False)
     return True
 
 # Save user history and recommendations
 def save_user_history(username, answers, recommended_perfumes):
-    global history_df
+    global history_df  # Declare global to modify history_df
     history_entry = {
         "username": username,
         "history": f"Answers: {answers}, Recommended: {recommended_perfumes}"
