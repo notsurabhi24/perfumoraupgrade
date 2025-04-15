@@ -2,7 +2,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 
-# Function to create connection to the SQLite database
+# SQLite DB connection
 def create_connection():
     conn = sqlite3.connect('perfume_app.db')
     return conn
@@ -15,8 +15,8 @@ def register_user(username, password):
     conn.commit()
     conn.close()
 
-# Function to check if the user exists and their password is correct
-def validate_user(username, password):
+# Function to authenticate a user
+def authenticate_user(username, password):
     conn = create_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, password))
@@ -28,46 +28,101 @@ def validate_user(username, password):
 def store_preferences(user_id, preferences, recommendations):
     conn = create_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO history (user_id, preferences, recommendations) VALUES (?, ?, ?)", 
-                   (user_id, preferences, recommendations))
-    conn.commit()
+    
+    # Check if user exists in the users table
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    
+    if user:
+        # Store preferences and recommendations in the history table
+        cursor.execute("INSERT INTO history (user_id, preferences, recommendations) VALUES (?, ?, ?)", 
+                       (user_id, preferences, recommendations))
+        conn.commit()
     conn.close()
 
-# Function to load perfume data
-def load_perfume_data():
+# Function to highlight the preferred words in the description
+def highlight_keywords(description, keywords):
+    for keyword in keywords:
+        description = description.replace(keyword, f"**{keyword}**")
+    return description
+
+# Show recommendations with highlighted preferences
+def show_recommendations():
+    # Assuming the user's answers are stored in session state
+    preferences = st.session_state.answers
+    mood = preferences.get("mood")
+    occasion = preferences.get("occasion")
+    notes = preferences.get("notes")
+
+    # Search in the perfume dataset
     df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
     df["combined"] = df["Description"].fillna("") + " " + df["Notes"].fillna("")
-    return df
+    
+    query_keywords = [mood, occasion] + notes
+    query_string = "|".join(query_keywords)
 
-# Streamlit app
+    results = df[df["combined"].str.contains(query_string, case=False, na=False)]
 
-# Initialize session state
-if 'step' not in st.session_state:
-    st.session_state.step = 1
-if 'answers' not in st.session_state:
-    st.session_state.answers = {}
+    if not results.empty:
+        for _, row in results.head(5).iterrows():
+            description = row["Description"]
+            highlighted_description = highlight_keywords(description, [mood, occasion] + notes)
+            st.markdown(f"### *{row['Name']}* by {row['Brand']}")
+            if pd.notna(row["Image URL"]):
+                st.image(row["Image URL"], width=180)
+            st.markdown(highlighted_description)
+            st.markdown("---")
+    else:
+        st.error("No perfect match found 😢 Try a different mood or notes!")
 
-# Page routing for the questionnaire
+    # Store preferences and recommendations
+    user_id = st.session_state.user_id  # Assuming this is already set in the session state
+    store_preferences(user_id, str(preferences), ", ".join(results["Name"].head(5).tolist()))
+
+    # Redirect back to the questionnaire after a delay
+    st.experimental_rerun()
+
+# Page layout and routing
+def show_login():
+    st.title("Login Page")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        user = authenticate_user(username, password)
+        if user:
+            st.session_state.user_id = user[0]
+            st.session_state.username = user[1]
+            st.session_state.step = 1
+            st.session_state.answers = {}
+            st.success("Login successful!")
+            st.experimental_rerun()  # Redirect to the questionnaire
+        else:
+            st.error("Invalid credentials, please try again.")
+
 def show_questionnaire():
-    df = load_perfume_data()
+    # Questionnaire steps using session state to keep track of progress
+    if 'step' not in st.session_state:
+        st.session_state.step = 1
+    if 'answers' not in st.session_state:
+        st.session_state.answers = {}
 
-    # Step 1: Mood
     if st.session_state.step == 1:
         st.subheader("Step 1: What's your current vibe?")
         mood = st.radio("", ["Romantic", "Bold", "Fresh", "Mysterious", "Cozy", "Energetic"])
         if st.button("Next ➡"):
             st.session_state.answers["mood"] = mood
             st.session_state.step = 2
+            st.experimental_rerun()
 
-    # Step 2: Occasion
     elif st.session_state.step == 2:
         st.subheader("Step 2: What's the occasion?")
         occasion = st.radio("", ["Everyday Wear", "Date Night", "Work", "Party"])
         if st.button("Next ➡"):
             st.session_state.answers["occasion"] = occasion
             st.session_state.step = 3
+            st.experimental_rerun()
 
-    # Step 3: Notes
     elif st.session_state.step == 3:
         st.subheader("Step 3: What kind of notes do you love?")
         notes = st.multiselect("Pick a few that speak to your soul 💫", 
@@ -75,74 +130,31 @@ def show_questionnaire():
         if st.button("Get My Recommendations 💖"):
             st.session_state.answers["notes"] = notes
             st.session_state.step = 4
+            st.experimental_rerun()
 
-    # Step 4: Results
-    elif st.session_state.step == 4:
-        st.subheader("💐 Based on your vibe, you might love these:")
+# Show the SQLite database contents (for debugging/viewing data)
+def view_db():
+    conn = create_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users")
+    users = cursor.fetchall()
+    cursor.execute("SELECT * FROM history")
+    history = cursor.fetchall()
+    conn.close()
 
-        mood = st.session_state.answers["mood"]
-        occasion = st.session_state.answers["occasion"]
-        notes = st.session_state.answers["notes"]
+    st.subheader("Users Table:")
+    st.write(users)
+    
+    st.subheader("History Table:")
+    st.write(history)
 
-        # Search using keywords in the combined column
-        query_keywords = [mood, occasion] + notes
-        query_string = "|".join(query_keywords)
-
-        # Perform the search for matches in the combined column
-        results = df[df["combined"].str.contains(query_string, case=False, na=False)]
-
-        recommendations = []
-        if not results.empty:
-            for _, row in results.head(5).iterrows():
-                st.markdown(f"### *{row['Name']}* by {row['Brand']}")
-                if pd.notna(row["Image URL"]):
-                    st.image(row["Image URL"], width=180)
-                st.write(row["Description"])
-                recommendations.append(row['Name'])
-                st.markdown("---")
-        else:
-            st.error("No perfect match found 😢 Try a different mood or notes!")
-
-        # Store preferences and recommendations in database
-        user_id = st.session_state.user_id
-        preferences = f"Mood: {mood}, Occasion: {occasion}, Notes: {', '.join(notes)}"
-        store_preferences(user_id, preferences, ", ".join(recommendations))
-
-        if st.button("🔄 Start Over"):
-            st.session_state.step = 1
-            st.session_state.answers = {}
-
-# Main page
-
-# Login page
-def login_page():
-    st.title("Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        user = validate_user(username, password)
-        if user:
-            st.session_state.user_id = user[0]  # User ID is stored in session state
-            st.session_state.step = 1  # Start questionnaire
-            st.success("Login successful! Redirecting to questionnaire...")
-        else:
-            st.error("Invalid username or password")
-
-# Registration page
-def register_page():
-    st.title("Register")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Register"):
-        register_user(username, password)
-        st.success("Registration successful! You can now log in.")
-
-# Sidebar navigation
-page = st.sidebar.selectbox("Select page", ["Login", "Register", "Questionnaire"])
-
-if page == "Login":
-    login_page()
-elif page == "Register":
-    register_page()
-elif page == "Questionnaire":
-    show_questionnaire()
+# Main app routing logic
+if __name__ == "__main__":
+    page = st.sidebar.radio("Choose a page", ["Login", "Questionnaire", "View Database"])
+    
+    if page == "Login":
+        show_login()
+    elif page == "Questionnaire":
+        show_questionnaire()
+    elif page == "View Database":
+        view_db()
