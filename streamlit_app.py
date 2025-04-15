@@ -1,6 +1,19 @@
 import streamlit as st
 import pandas as pd
-import bcrypt
+import chardet
+
+# Function to detect file encoding
+def detect_encoding(file_path):
+    with open(file_path, "rb") as f:
+        result = chardet.detect(f.read(10000))  # Read first 10,000 bytes
+        return result['encoding']
+
+# Attempt to read the CSV file with the detected encoding
+encoding = detect_encoding("final_perfume_data.csv")
+df = pd.read_csv("final_perfume_data.csv", encoding=encoding)
+
+# Your existing code continues here...
+
 
 # Global variables initialization (try reading from CSV or create empty DataFrame)
 users_df = pd.DataFrame(columns=["username", "password", "email"])
