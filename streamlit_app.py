@@ -1,33 +1,30 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
+import sqlite3
 from sentence_transformers import SentenceTransformer, util
-import os
+
+# Initialize SentenceTransformer for NLP (You can train or load your custom model here)
+model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
 
 # SQLite DB connection
 def create_connection():
     conn = sqlite3.connect('perfume_app.db')
     return conn
 
-# Function to create database tables
-def create_database():
+# Function to create the necessary tables in the database
+def create_tables():
     conn = create_connection()
     cursor = conn.cursor()
-    
-    # Create the 'users' table for storing login credentials
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        username TEXT NOT NULL,
-                        password TEXT NOT NULL)''')
-    
-    # Create the 'history' table to store user preferences and recommendations
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                        username TEXT, 
+                        password TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, 
                         user_id INTEGER,
-                        preferences TEXT,
+                        preferences TEXT, 
                         recommendations TEXT,
-                        FOREIGN KEY(user_id) REFERENCES users(id))''')
-    
+                        FOREIGN KEY (user_id) REFERENCES users(id))''')
     conn.commit()
     conn.close()
 
@@ -52,61 +49,41 @@ def authenticate_user(username, password):
 def store_preferences(user_id, preferences, recommendations):
     conn = create_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-    user = cursor.fetchone()
-    
-    if user:
-        cursor.execute("INSERT INTO history (user_id, preferences, recommendations) VALUES (?, ?, ?)", 
-                       (user_id, preferences, recommendations))
-        conn.commit()
+    cursor.execute("INSERT INTO history (user_id, preferences, recommendations) VALUES (?, ?, ?)", 
+                   (user_id, preferences, recommendations))
+    conn.commit()
     conn.close()
 
-# Function to load the perfume data from CSV
-def load_perfume_data():
-    df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
-    df["combined"] = df["Description"].fillna("") + " " + df["Notes"].fillna("")
-    return df
+# Dummy AI model (replace with real NLP model)
+def get_recommendations(preferences):
+    df = pd.read_csv('final_perfume_data.csv', encoding="ISO-8859-1")
+    mood = preferences.get('mood')
+    if mood:
+        # Simulating AI model logic, ideally you'd match the mood with perfumes in the CSV
+        recommendations = df[df['Description'].str.contains(mood, case=False, na=False)]
+        return recommendations.head(5)
+    return pd.DataFrame()  # Return empty if no recommendations
 
-# Function to perform AI-based perfume recommendation using Sentence Transformers
-def recommend_perfume(preferences, df):
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    query = " ".join(preferences.values())
-    
-    query_embedding = model.encode(query, convert_to_tensor=True)
-    perfume_embeddings = model.encode(df["combined"].tolist(), convert_to_tensor=True)
-    
-    cosine_scores = util.pytorch_cos_sim(query_embedding, perfume_embeddings)[0]
-    top_results = cosine_scores.topk(5)
-    
-    recommendations = []
-    for score, idx in zip(top_results[0], top_results[1]):
-        recommendations.append((df.iloc[idx]["Name"], df.iloc[idx]["Brand"], score.item()))
-    
-    return recommendations
+# Function to highlight keywords in the perfume description
+def highlight_keywords(description, keywords):
+    for keyword in keywords:
+        description = description.replace(keyword, f"**{keyword}**")
+    return description
 
-# Show the AI-based perfume recommendations
-def show_recommendations():
-    preferences = st.session_state.answers
-    mood = preferences.get("mood")
-    occasion = preferences.get("occasion")
-    notes = preferences.get("notes")
-
-    df = load_perfume_data()
-    recommendations = recommend_perfume(preferences, df)
-
-    if recommendations:
-        for name, brand, score in recommendations:
-            st.markdown(f"### *{name}* by {brand} - Score: {score:.2f}")
+# Show recommendations with highlighted preferences
+def show_recommendations(preferences):
+    results = get_recommendations(preferences)
+    if not results.empty:
+        for _, row in results.iterrows():
+            description = row['Description']
+            highlighted_description = highlight_keywords(description, [preferences.get("mood", "")])
+            st.markdown(f"### *{row['Name']}* by {row['Brand']}")
+            st.markdown(highlighted_description)
+            st.markdown("---")
     else:
-        st.error("No recommendations found!")
+        st.error("No matching recommendations found.")
 
-    # Store preferences and recommendations in the database
-    user_id = st.session_state.user_id
-    store_preferences(user_id, str(preferences), ", ".join([name for name, _, _ in recommendations]))
-
-    st.experimental_rerun()
-
-# Function for login page
+# Show login page
 def show_login():
     st.title("Login Page")
     username = st.text_input("Username")
@@ -119,26 +96,22 @@ def show_login():
             st.session_state.username = user[1]
             st.session_state.step = 1
             st.session_state.answers = {}
-            st.success("Login successful! Redirecting to quiz...")
-            st.experimental_rerun()  # Now works after login
+            st.success("Login successful!")
+            st.experimental_rerun()  # Redirect to questionnaire
         else:
             st.error("Invalid credentials, please try again.")
 
-# Function for registration page
-def show_registration():
+# Show registration page
+def show_register():
     st.title("Register Page")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
-    confirm_password = st.text_input("Confirm Password", type="password")
-
+    
     if st.button("Register"):
-        if password != confirm_password:
-            st.error("Passwords do not match!")
-        else:
-            register_user(username, password)
-            st.success("Registration successful! Please log in.")
+        register_user(username, password)
+        st.success("Registration successful! You can now log in.")
 
-# Function to show the questionnaire page
+# Show the questionnaire
 def show_questionnaire():
     if 'step' not in st.session_state:
         st.session_state.step = 1
@@ -167,24 +140,30 @@ def show_questionnaire():
                                ["Vanilla", "Oud", "Citrus", "Floral", "Spicy", "Woody", "Sweet", "Musky"])
         if st.button("Get My Recommendations 💖"):
             st.session_state.answers["notes"] = notes
-            show_recommendations()
+            st.session_state.step = 4
+            st.experimental_rerun()
+
+    elif st.session_state.step == 4:
+        st.subheader("Here are your recommendations!")
+        show_recommendations(st.session_state.answers)
+
+        # Store preferences and recommendations in the database
+        store_preferences(st.session_state.user_id, str(st.session_state.answers), 
+                          ", ".join(st.session_state.answers.get("mood", [])))
+        st.success("Preferences saved to history.")
 
 # Main app routing logic
 def main():
-    # Create database tables on app startup (just once)
-    create_database()
+    create_tables()  # Ensure tables are created on startup
 
-    page = st.sidebar.radio("Choose a page", ["Login", "Register", "Questionnaire"])
-
-    if page == "Login":
-        show_login()
-    elif page == "Register":
-        show_registration()
-    elif page == "Questionnaire":
-        if 'user_id' not in st.session_state:
-            st.warning("Please log in first.")
-        else:
-            show_questionnaire()
+    if 'logged_in' not in st.session_state or not st.session_state.logged_in:
+        page = st.sidebar.radio("Choose a page", ["Login", "Register"])
+        if page == "Login":
+            show_login()
+        elif page == "Register":
+            show_register()
+    else:
+        show_questionnaire()
 
 if __name__ == "__main__":
     main()
