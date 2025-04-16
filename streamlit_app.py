@@ -14,76 +14,136 @@ if 'step' not in st.session_state:
     st.session_state.step = 1
 if 'answers' not in st.session_state:
     st.session_state.answers = {}
+if 'user_data' not in st.session_state:
+    st.session_state.user_data = {}
+if 'history' not in st.session_state:
+    st.session_state.history = {}
 
-# App title
-st.set_page_config(page_title="Perfume Matchmaker", layout="centered")
-st.title("🌸 Perfume Personality Matchmaker")
-st.markdown("Let your vibes choose your scent. Answer a few questions and we'll match you with your signature fragrance!")
+# Function to save the user's answers to history
+def save_to_history(username, answers):
+    if username not in st.session_state.history:
+        st.session_state.history[username] = []
+    st.session_state.history[username].append(answers)
 
-# Step 1 – Mood
-if st.session_state.step == 1:
-    st.subheader("Step 1: What's your current vibe?")
-    mood = st.radio("", ["Romantic", "Bold", "Fresh", "Mysterious", "Cozy", "Energetic"])
-    if st.button("Next ➡"):
-        st.session_state.answers["mood"] = mood
-        st.session_state.step = 2  # Move to next step directly
-        st.session_state.answers["mood"] = mood  # Store the mood
-        # No rerun required, move directly to next step in flow
-
-# Step 2 – Occasion
-elif st.session_state.step == 2:
-    st.subheader("Step 2: What's the occasion?")
-    occasion = st.radio("", ["Everyday Wear", "Date Night", "Work", "Party"])
-    if st.button("Next ➡"):
-        st.session_state.answers["occasion"] = occasion
-        st.session_state.step = 3  # Move to next step
-
-# Step 3 – Notes
-elif st.session_state.step == 3:
-    st.subheader("Step 3: What kind of notes do you love?")
-    notes = st.multiselect("Pick a few that speak to your soul 💫", 
-                           ["Vanilla", "Oud", "Citrus", "Floral", "Spicy", "Woody", "Sweet", "Musky"])
-    if st.button("Get My Recommendations 💖"):
-        st.session_state.answers["notes"] = notes
-        st.session_state.step = 4  # Proceed to results after getting notes
-
-# Step 4 – Results (NLP model)
-elif st.session_state.step == 4:
-    st.subheader("💐 Based on your vibe, you might love these:")
-
-    mood = st.session_state.answers["mood"]
-    occasion = st.session_state.answers["occasion"]
-    notes = st.session_state.answers["notes"]
-
-    # NLP Model: Using TF-IDF and Cosine Similarity to match the user's preferences with perfumes
-    query_keywords = [mood, occasion] + notes
-    query_string = " ".join(query_keywords)  # Combining all user preferences into a single query string
-
-    # Initialize TF-IDF vectorizer and fit on the combined text (Description + Notes)
-    vectorizer = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = vectorizer.fit_transform(df['combined'])
-
-    # Convert query string to TF-IDF vector
-    query_tfidf = vectorizer.transform([query_string])
-
-    # Compute cosine similarity between query and perfume dataset
-    cosine_sim = cosine_similarity(query_tfidf, tfidf_matrix)
-
-    # Get top 5 most similar perfumes based on the cosine similarity
-    top_matches = cosine_sim[0].argsort()[-5:][::-1]  # Get indices of top 5 matches
-
-    if len(top_matches) > 0:
-        for idx in top_matches:
-            row = df.iloc[idx]
-            st.markdown(f"### *{row['Name']}* by {row['Brand']}")
-            if pd.notna(row["Image URL"]):
-                st.image(row["Image URL"], width=180)
-            st.write(row["Description"])
-            st.markdown("---")
+# Function to register a new user
+def register_user(username, password):
+    if username in st.session_state.user_data:
+        st.error("Username already exists!")
     else:
-        st.error("No perfect match found 😢 Try a different mood or notes!")
+        st.session_state.user_data[username] = password
+        st.success("Registration successful! Please log in.")
 
-    if st.button("🔄 Start Over"):
-        st.session_state.step = 1
-        st.session_state.answers = {}
-        # Resetting and no rerun needed since step will be reset manually
+# Function to login a user
+def login_user(username, password):
+    if username not in st.session_state.user_data:
+        st.error("Username does not exist.")
+    elif st.session_state.user_data[username] != password:
+        st.error("Incorrect password.")
+    else:
+        st.success(f"Welcome back, {username}!")
+        return True
+    return False
+
+# Registration and Login Page
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    st.sidebar.subheader("Login / Register")
+    option = st.sidebar.radio("Choose an option", ["Login", "Register"])
+
+    if option == "Register":
+        username = st.sidebar.text_input("Username")
+        password = st.sidebar.text_input("Password", type="password")
+        if st.sidebar.button("Register"):
+            register_user(username, password)
+
+    if option == "Login":
+        username = st.sidebar.text_input("Username")
+        password = st.sidebar.text_input("Password", type="password")
+        if st.sidebar.button("Login"):
+            if login_user(username, password):
+                st.session_state.logged_in = True
+                st.session_state.username = username
+
+    if st.session_state.logged_in:
+        st.sidebar.success("You are logged in!")
+        st.sidebar.button("Logout", on_click=lambda: st.session_state.update({'logged_in': False}))
+else:
+    # Show history
+    if 'username' in st.session_state:
+        user_history = st.session_state.history.get(st.session_state.username, [])
+        if user_history:
+            st.sidebar.subheader("Your History")
+            for entry in user_history:
+                st.sidebar.write(entry)
+        else:
+            st.sidebar.write("No history found.")
+
+    # Perfume Recommendation App
+    st.set_page_config(page_title="Perfume Matchmaker", layout="centered")
+    st.title("🌸 Perfume Personality Matchmaker")
+    st.markdown("Let your vibes choose your scent. Answer a few questions and we'll match you with your signature fragrance!")
+
+    # Step 1 – Mood
+    if st.session_state.step == 1:
+        st.subheader("Step 1: What's your current vibe?")
+        mood = st.radio("", ["Romantic", "Bold", "Fresh", "Mysterious", "Cozy", "Energetic"])
+        if st.button("Next ➡"):
+            st.session_state.answers["mood"] = mood
+            st.session_state.step = 2  # Move to next step directly
+
+    # Step 2 – Occasion
+    elif st.session_state.step == 2:
+        st.subheader("Step 2: What's the occasion?")
+        occasion = st.radio("", ["Everyday Wear", "Date Night", "Work", "Party"])
+        if st.button("Next ➡"):
+            st.session_state.answers["occasion"] = occasion
+            st.session_state.step = 3  # Move to next step
+
+    # Step 3 – Notes
+    elif st.session_state.step == 3:
+        st.subheader("Step 3: What kind of notes do you love?")
+        notes = st.multiselect("Pick a few that speak to your soul 💫", 
+                               ["Vanilla", "Oud", "Citrus", "Floral", "Spicy", "Woody", "Sweet", "Musky"])
+        if st.button("Get My Recommendations 💖"):
+            st.session_state.answers["notes"] = notes
+            st.session_state.step = 4  # Proceed to results after getting notes
+
+    # Step 4 – Results (NLP Model)
+    elif st.session_state.step == 4:
+        st.subheader("💐 Based on your vibe, you might love these:")
+
+        mood = st.session_state.answers["mood"]
+        occasion = st.session_state.answers["occasion"]
+        notes = st.session_state.answers["notes"]
+
+        # Search using keywords in the combined column
+        query_keywords = [mood, occasion] + notes
+        query_string = "|".join(query_keywords)
+
+        # Perform the search for matches in the combined column
+        vectorizer = TfidfVectorizer(stop_words='english')
+        tfidf_matrix = vectorizer.fit_transform(df['combined'])
+        query_tfidf = vectorizer.transform([query_string])
+        cosine_sim = cosine_similarity(query_tfidf, tfidf_matrix)
+
+        top_matches = cosine_sim[0].argsort()[-5:][::-1]
+
+        if top_matches.size > 0:
+            for idx in top_matches:
+                row = df.iloc[idx]
+                st.markdown(f"### *{row['Name']}* by {row['Brand']}")
+                if pd.notna(row["Image URL"]):
+                    st.image(row["Image URL"], width=180)
+                st.write(row["Description"])
+                st.markdown("---")
+        else:
+            st.error("No perfect match found 😢 Try a different mood or notes!")
+
+        # Save to history
+        save_to_history(st.session_state.username, st.session_state.answers)
+
+        if st.button("🔄 Start Over"):
+            st.session_state.step = 1
+            st.session_state.answers = {}
