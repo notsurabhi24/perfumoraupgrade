@@ -2,43 +2,47 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 
-# Create and connect to the SQLite DB
+# --- Session State Init ---
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "page" not in st.session_state:
+    st.session_state.page = "Login"
+if "step" not in st.session_state:
+    st.session_state.step = 1
+if "answers" not in st.session_state:
+    st.session_state.answers = {}
+
+# --- SQLite Connection ---
 def create_connection():
     conn = sqlite3.connect('perfume_app.db')
     return conn
 
-# Set up DB tables if they don't exist
-def setup_database():
+# --- DB Table Creation (run once) ---
+def initialize_db():
     conn = create_connection()
     cursor = conn.cursor()
-
-    # Create users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL
+            username TEXT UNIQUE,
+            password TEXT
         )
     ''')
-
-    # Create history table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
+            user_id INTEGER,
             preferences TEXT,
             recommendations TEXT,
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
     ''')
-
     conn.commit()
     conn.close()
 
-# Call this at the top so it runs when the app starts
-setup_database()
+initialize_db()
 
-# Register user
+# --- Register New User ---
 def register_user(username, password):
     conn = create_connection()
     cursor = conn.cursor()
@@ -49,7 +53,7 @@ def register_user(username, password):
         st.error("Username already exists.")
     conn.close()
 
-# Authenticate user
+# --- Authenticate User ---
 def authenticate_user(username, password):
     conn = create_connection()
     cursor = conn.cursor()
@@ -58,7 +62,7 @@ def authenticate_user(username, password):
     conn.close()
     return user
 
-# Store user preferences and recommendations
+# --- Store Preferences ---
 def store_preferences(user_id, preferences, recommendations):
     conn = create_connection()
     cursor = conn.cursor()
@@ -67,18 +71,18 @@ def store_preferences(user_id, preferences, recommendations):
     conn.commit()
     conn.close()
 
-# Highlight keywords in perfume description
+# --- Keyword Highlighting ---
 def highlight_keywords(description, keywords):
     for keyword in keywords:
         description = description.replace(keyword, f"**{keyword}**")
     return description
 
-# Show perfume recommendations
+# --- Recommendations Display ---
 def show_recommendations():
     preferences = st.session_state.answers
     mood = preferences.get("mood")
     occasion = preferences.get("occasion")
-    notes = preferences.get("notes", [])
+    notes = preferences.get("notes")
 
     df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
     df["combined"] = df["Description"].fillna("") + " " + df["Notes"].fillna("")
@@ -91,57 +95,51 @@ def show_recommendations():
     if not results.empty:
         for _, row in results.head(5).iterrows():
             description = row["Description"]
-            highlighted_description = highlight_keywords(description, query_keywords)
+            highlighted = highlight_keywords(description, query_keywords)
             st.markdown(f"### *{row['Name']}* by {row['Brand']}")
             if pd.notna(row["Image URL"]):
                 st.image(row["Image URL"], width=180)
-            st.markdown(highlighted_description)
+            st.markdown(highlighted)
             st.markdown("---")
     else:
         st.error("No perfect match found 😢 Try a different mood or notes!")
 
-    user_id = st.session_state.get("user_id")
-    if user_id:
-        store_preferences(user_id, str(preferences), ", ".join(results["Name"].head(5).tolist()))
-        st.success("Your preferences were saved!")
-    
-    st.experimental_rerun()
+    user_id = st.session_state.user_id
+    store_preferences(user_id, str(preferences), ", ".join(results["Name"].head(5).tolist()))
 
-# Show login page
+# --- Login Page ---
 def show_login():
     st.title("Login Page")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    username = st.text_input("Username").strip()
+    password = st.text_input("Password", type="password").strip()
 
     if st.button("Login"):
         user = authenticate_user(username, password)
         if user:
             st.session_state.user_id = user[0]
             st.session_state.username = user[1]
+            st.session_state.logged_in = True
             st.session_state.step = 1
             st.session_state.answers = {}
-            st.success("Login successful!")
+            st.session_state.page = "Questionnaire"
+            st.success("Login successful! Redirecting...")
             st.experimental_rerun()
         else:
             st.error("Invalid credentials, please try again.")
 
-    st.markdown("Don't have an account?")
-    new_user = st.text_input("Create Username", key="new_user")
-    new_pass = st.text_input("Create Password", type="password", key="new_pass")
+    st.markdown("---")
+    st.subheader("New here?")
+    new_user = st.text_input("Create Username", key="new_user").strip()
+    new_pass = st.text_input("Create Password", type="password", key="new_pass").strip()
     if st.button("Register"):
         if new_user and new_pass:
             register_user(new_user, new_pass)
-            st.success("Account created! Please log in.")
+            st.success("Account created! You can now log in.")
         else:
             st.error("Username and password cannot be empty.")
 
-# Questionnaire logic
+# --- Questionnaire Steps ---
 def show_questionnaire():
-    if 'step' not in st.session_state:
-        st.session_state.step = 1
-    if 'answers' not in st.session_state:
-        st.session_state.answers = {}
-
     if st.session_state.step == 1:
         st.subheader("Step 1: What's your current vibe?")
         mood = st.radio("", ["Romantic", "Bold", "Fresh", "Mysterious", "Cozy", "Energetic"])
@@ -168,9 +166,10 @@ def show_questionnaire():
             st.experimental_rerun()
 
     elif st.session_state.step == 4:
+        st.subheader("Your Personalized Perfume Picks ✨")
         show_recommendations()
 
-# View database contents
+# --- Database Viewer ---
 def view_db():
     conn = create_connection()
     cursor = conn.cursor()
@@ -181,18 +180,39 @@ def view_db():
     conn.close()
 
     st.subheader("Users Table:")
-    st.write(pd.DataFrame(users, columns=["ID", "Username", "Password"]))
+    st.write(users)
     
     st.subheader("History Table:")
-    st.write(pd.DataFrame(history, columns=["ID", "User ID", "Preferences", "Recommendations"]))
+    st.write(history)
 
-# App routing
+# --- Logout Option ---
+def logout():
+    st.session_state.logged_in = False
+    st.session_state.page = "Login"
+    st.success("Logged out successfully.")
+    st.experimental_rerun()
+
+# --- Routing ---
 if __name__ == "__main__":
-    page = st.sidebar.radio("Choose a page", ["Login", "Questionnaire", "View Database"])
-    
+    if st.session_state.logged_in:
+        st.session_state.page = "Questionnaire"
+
+    if st.session_state.logged_in:
+        with st.sidebar:
+            st.write(f"👤 Logged in as: **{st.session_state.username}**")
+            if st.button("Logout"):
+                logout()
+
+    page = st.sidebar.radio("Choose a page", ["Login", "Questionnaire", "View Database"], 
+                            index=["Login", "Questionnaire", "View Database"].index(st.session_state.page))
+
     if page == "Login":
         show_login()
     elif page == "Questionnaire":
-        show_questionnaire()
+        if not st.session_state.logged_in:
+            st.warning("Please login first.")
+            show_login()
+        else:
+            show_questionnaire()
     elif page == "View Database":
         view_db()
