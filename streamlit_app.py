@@ -50,7 +50,7 @@ if 'logged_in' not in st.session_state:
 
 if not st.session_state.logged_in:
     st.sidebar.subheader("Login / Register")
-    option = st.sidebar.radio("Choose an option", ["Login", "Register"])
+    option = st.sidebar.radio("Choose an option", ["Login", "Register", "View History"])
 
     if option == "Register":
         username = st.sidebar.text_input("Username")
@@ -66,11 +66,27 @@ if not st.session_state.logged_in:
                 st.session_state.logged_in = True
                 st.session_state.username = username
 
-    if st.session_state.logged_in:
-        st.sidebar.success("You are logged in!")
-        st.sidebar.button("Logout", on_click=lambda: st.session_state.update({'logged_in': False}))
+    if option == "View History":
+        username = st.sidebar.text_input("Username")
+        password = st.sidebar.text_input("Password", type="password")
+        if st.sidebar.button("Login to View History"):
+            if login_user(username, password):
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                user_history = st.session_state.history.get(st.session_state.username, [])
+                if user_history:
+                    st.sidebar.subheader("Your History")
+                    for entry in user_history:
+                        st.sidebar.write(entry)
+                else:
+                    st.sidebar.write("No history found.")
 else:
-    # Show history
+    # Perfume Recommendation App for logged-in users
+    st.set_page_config(page_title="Perfume Matchmaker", layout="centered")
+    st.title("🌸 Perfume Personality Matchmaker")
+    st.markdown("Let your vibes choose your scent. Answer a few questions and we'll match you with your signature fragrance!")
+
+    # Displaying User's History if Logged In
     if 'username' in st.session_state:
         user_history = st.session_state.history.get(st.session_state.username, [])
         if user_history:
@@ -79,11 +95,6 @@ else:
                 st.sidebar.write(entry)
         else:
             st.sidebar.write("No history found.")
-
-    # Perfume Recommendation App
-    st.set_page_config(page_title="Perfume Matchmaker", layout="centered")
-    st.title("🌸 Perfume Personality Matchmaker")
-    st.markdown("Let your vibes choose your scent. Answer a few questions and we'll match you with your signature fragrance!")
 
     # Step 1 – Mood
     if st.session_state.step == 1:
@@ -141,8 +152,9 @@ else:
         else:
             st.error("No perfect match found 😢 Try a different mood or notes!")
 
-        # Save to history
-        save_to_history(st.session_state.username, st.session_state.answers)
+        # Save to history for logged-in users
+        if 'username' in st.session_state:
+            save_to_history(st.session_state.username, st.session_state.answers)
 
         if st.button("🔄 Start Over"):
             st.session_state.step = 1
