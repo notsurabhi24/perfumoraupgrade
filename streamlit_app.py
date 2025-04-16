@@ -1,142 +1,165 @@
 import streamlit as st
 import pandas as pd
-import hashlib
 import sqlite3
-import os
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.feature_extraction.text import TfidfVectorizer
+from werkzeug.security import generate_password_hash, check_password_hash
 
-# Load perfume data
-@st.cache_data
-def load_data():
-    df = pd.read_csv("final_perfume_data.csv")
-    df = df.dropna(subset=['Description'])
-    return df
-
-df = load_data()
-
-# DB functions
+# Database connection setup
 def create_connection():
-    conn = sqlite3.connect("users.db", check_same_thread=False)
+    conn = sqlite3.connect('perfume_app.db')
     return conn
 
-def create_usertable():
+def create_table():
     conn = create_connection()
-    conn.execute('CREATE TABLE IF NOT EXISTS userstable(username TEXT, password TEXT)')
-    conn.execute('''CREATE TABLE IF NOT EXISTS history(username TEXT, perfume TEXT)''')
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        password TEXT NOT NULL
+    )''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS recommendations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        mood TEXT,
+        occasion TEXT,
+        notes TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )''')
     conn.commit()
     conn.close()
 
-def add_userdata(username, password):
+# Create tables if they don't exist
+create_table()
+
+# Load dataset
+df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
+
+# Combine text for searching using the correct column names
+df["combined"] = df["Description"].fillna("") + " " + df["Notes"].fillna("")
+
+# Session state init
+if 'step' not in st.session_state:
+    st.session_state.step = 1
+if 'answers' not in st.session_state:
+    st.session_state.answers = {}
+
+# Login and registration functions
+def register_user(username, password):
     conn = create_connection()
-    conn.execute('INSERT INTO userstable(username, password) VALUES (?, ?)', (username, password))
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+    if cursor.fetchone() is not None:
+        return "Username already exists."
+    hashed_pw = generate_password_hash(password)
+    cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pw))
     conn.commit()
     conn.close()
+    return "User registered successfully!"
 
-def login_user(username, password):
+def authenticate_user(username, password):
     conn = create_connection()
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM userstable WHERE username=? AND password=?', (username, password))
-    data = cur.fetchone()
+    cursor = conn.cursor()
+    cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
+    record = cursor.fetchone()
     conn.close()
-    return data
+    if record and check_password_hash(record[0], password):
+        return True
+    return False
 
-def save_history(username, perfume):
-    conn = create_connection()
-    conn.execute("INSERT INTO history(username, perfume) VALUES (?, ?)", (username, perfume))
-    conn.commit()
-    conn.close()
+# App title
+st.set_page_config(page_title="Perfume Matchmaker", layout="centered")
+st.title("🌸 Perfume Personality Matchmaker")
+st.markdown("Let your vibes choose your scent. Answer a few questions and we'll match you with your signature fragrance!")
 
-def view_history(username):
-    conn = create_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT perfume FROM history WHERE username=?", (username,))
-    rows = cur.fetchall()
-    conn.close()
-    return [row[0] for row in rows]
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-# AI recommendation
-@st.cache_data
-def recommend_perfumes(user_input):
-    tfidf = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = tfidf.fit_transform(df['Description'])
-    user_vec = tfidf.transform([user_input])
-    similarity = cosine_similarity(user_vec, tfidf_matrix).flatten()
-    top_indices = similarity.argsort()[-5:][::-1]
-    return df.iloc[top_indices]
-
-# UI pages
+# Login page
 def show_login():
-    st.title("Login")
+    st.subheader("Login")
     username = st.text_input("Username")
     password = st.text_input("Password", type='password')
     if st.button("Login"):
-        hashed_pw = hash_password(password)
-        user = login_user(username, hashed_pw)
-        if user:
-            st.session_state["logged_in"] = True
-            st.session_state["username"] = username
+        if authenticate_user(username, password):
+            st.session_state.logged_in = True
+            st.session_state.username = username
+            st.success("Login successful!")
+            st.experimental_rerun()
         else:
-            st.error("Invalid credentials")
-    if st.button("Register"):
-        st.session_state["register"] = True
+            st.error("Invalid credentials, please try again.")
 
+# Register page
 def show_register():
-    st.title("Register")
-    username = st.text_input("New Username")
-    password = st.text_input("New Password", type='password')
-    if st.button("Create Account"):
-        hashed_pw = hash_password(password)
-        add_userdata(username, hashed_pw)
-        st.success("Account created! Please login.")
-        st.session_state["register"] = False
+    st.subheader("Register")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type='password')
+    if st.button("Register"):
+        result = register_user(username, password)
+        st.success(result)
 
-def show_questionnaire():
-    st.title("Perfume Preference Questionnaire")
-    q1 = st.selectbox("What mood do you want the perfume to evoke?", ["Romantic", "Fresh", "Bold", "Calm"])
-    q2 = st.selectbox("Preferred scent family?", ["Floral", "Woody", "Oriental", "Citrus"])
-    q3 = st.selectbox("When do you plan to wear it?", ["Day", "Night", "Special Occasions"])
-    if st.button("Get Recommendations"):
-        user_input = f"{q1} {q2} {q3}"
-        results = recommend_perfumes(user_input)
-        st.subheader("Top Perfume Matches:")
-        for _, row in results.iterrows():
-            st.write(f"**{row['Perfume Name']}** - {row['Description']}")
-            save_history(st.session_state["username"], row['Perfume Name'])
-
-def show_history():
-    st.title("Your Recommendation History")
-    history = view_history(st.session_state["username"])
-    if history:
-        for item in history:
-            st.write("-", item)
-    else:
-        st.info("No history yet. Try out the questionnaire!")
-
-def main():
-    st.set_page_config(page_title="Perfume Recommender", layout="wide")
-    create_usertable()
-
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-    if "register" not in st.session_state:
-        st.session_state.register = False
-
-    if st.session_state.register:
-        show_register()
-    elif not st.session_state.logged_in:
+# Step 1 – Mood
+if 'logged_in' not in st.session_state:
+    page = st.sidebar.radio("Choose a page", ["Login", "Register"])
+    if page == "Login":
         show_login()
-    else:
-        st.sidebar.title("Navigation")
-        choice = st.sidebar.radio("Go to", ["Questionnaire", "History"])
+    elif page == "Register":
+        show_register()
+elif st.session_state.logged_in:
+    # Proceed with questionnaire if logged in
+    if st.session_state.step == 1:
+        st.subheader("Step 1: What's your current vibe?")
+        mood = st.radio("", ["Romantic", "Bold", "Fresh", "Mysterious", "Cozy", "Energetic"])
+        if st.button("Next ➡"):
+            st.session_state.answers["mood"] = mood
+            st.session_state.step = 2  # Move to next step directly
 
-        if choice == "Questionnaire":
-            show_questionnaire()
-        elif choice == "History":
-            show_history()
+    elif st.session_state.step == 2:
+        st.subheader("Step 2: What's the occasion?")
+        occasion = st.radio("", ["Everyday Wear", "Date Night", "Work", "Party"])
+        if st.button("Next ➡"):
+            st.session_state.answers["occasion"] = occasion
+            st.session_state.step = 3  # Move to next step
 
-if __name__ == '__main__':
-    main()
+    elif st.session_state.step == 3:
+        st.subheader("Step 3: What kind of notes do you love?")
+        notes = st.multiselect("Pick a few that speak to your soul 💫", 
+                               ["Vanilla", "Oud", "Citrus", "Floral", "Spicy", "Woody", "Sweet", "Musky"])
+        if st.button("Get My Recommendations 💖"):
+            st.session_state.answers["notes"] = notes
+            st.session_state.step = 4  # Proceed to results after getting notes
+
+    elif st.session_state.step == 4:
+        st.subheader("💐 Based on your vibe, you might love these:")
+
+        mood = st.session_state.answers["mood"]
+        occasion = st.session_state.answers["occasion"]
+        notes = st.session_state.answers["notes"]
+
+        # Search using keywords in the combined text
+        query_keywords = [mood, occasion] + notes
+        query_string = "|".join(query_keywords)
+
+        # Perform the search for matches in the combined column
+        results = df[df["combined"].str.contains(query_string, case=False, na=False)]
+
+        if not results.empty:
+            for _, row in results.head(5).iterrows():
+                st.markdown(f"### *{row['Name']}* by {row['Brand']}")
+                if pd.notna(row["Image URL"]):
+                    st.image(row["Image URL"], width=180)
+                st.write(row["Description"])
+                st.markdown("---")
+        else:
+            st.error("No perfect match found 😢 Try a different mood or notes!")
+
+        # Save the recommendation in the database
+        conn = create_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE username = ?", (st.session_state.username,))
+        user_id = cursor.fetchone()[0]
+        cursor.execute("INSERT INTO recommendations (user_id, mood, occasion, notes) VALUES (?, ?, ?, ?)",
+                       (user_id, mood, occasion, ", ".join(notes)))
+        conn.commit()
+        conn.close()
+
+        if st.button("🔄 Start Over"):
+            st.session_state.step = 1
+            st.session_state.answers = {}
