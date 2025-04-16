@@ -1,32 +1,35 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+from sentence_transformers import SentenceTransformer, util
 
-# SQLite connection
+# Load NLP model
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# SQLite DB connection
 def create_connection():
-    conn = sqlite3.connect("perfume_app.db")
+    conn = sqlite3.connect('perfume_app.db')
     return conn
 
-# Setup DB tables if not exist
-def setup_database():
+# Create necessary tables if they don't exist
+def initialize_db():
     conn = create_connection()
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE,
             password TEXT
         )
-    ''')
-    cursor.execute('''
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             preferences TEXT,
-            recommendations TEXT,
-            FOREIGN KEY (user_id) REFERENCES users(id)
+            recommendations TEXT
         )
-    ''')
+    """)
     conn.commit()
     conn.close()
 
@@ -38,7 +41,7 @@ def register_user(username, password):
     conn.commit()
     conn.close()
 
-# Authenticate user
+# Authenticate a user
 def authenticate_user(username, password):
     conn = create_connection()
     cursor = conn.cursor()
@@ -51,52 +54,58 @@ def authenticate_user(username, password):
 def store_preferences(user_id, preferences, recommendations):
     conn = create_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO history (user_id, preferences, recommendations) VALUES (?, ?, ?)",
+    cursor.execute("INSERT INTO history (user_id, preferences, recommendations) VALUES (?, ?, ?)", 
                    (user_id, preferences, recommendations))
     conn.commit()
     conn.close()
 
-# Highlight words
+# NLP-based recommendation system
+def get_ai_recommendations(preferences):
+    mood = preferences.get("mood", "")
+    occasion = preferences.get("occasion", "")
+    notes = preferences.get("notes", [])
+    
+    user_input = f"{mood} {occasion} {' '.join(notes)}"
+    input_embedding = model.encode(user_input, convert_to_tensor=True)
+
+    df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
+    df['combined'] = df['Description'].fillna('') + " " + df['Notes'].fillna('')
+    df['embedding'] = df['combined'].apply(lambda x: model.encode(x, convert_to_tensor=True))
+    df['score'] = df['embedding'].apply(lambda x: util.pytorch_cos_sim(x, input_embedding).item())
+    df = df.sort_values(by="score", ascending=False)
+
+    return df.head(5)
+
+# Highlight preferred words
 def highlight_keywords(description, keywords):
     for keyword in keywords:
-        if keyword:
-            description = description.replace(keyword, f"**{keyword}**")
+        description = description.replace(keyword, f"**{keyword}**")
     return description
 
 # Show recommendations
 def show_recommendations():
     preferences = st.session_state.answers
-    mood = preferences.get("mood")
-    occasion = preferences.get("occasion")
-    notes = preferences.get("notes")
+    top_results = get_ai_recommendations(preferences)
 
-    df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
-    df["combined"] = df["Description"].fillna("") + " " + df["Notes"].fillna("")
-    query_keywords = [mood, occasion] + notes
-    query_string = "|".join([kw for kw in query_keywords if kw])
-    results = df[df["combined"].str.contains(query_string, case=False, na=False)]
+    st.subheader("Your Personalized Picks 💖")
 
-    if not results.empty:
-        for _, row in results.head(5).iterrows():
-            description = row["Description"]
-            highlighted = highlight_keywords(description, query_keywords)
-            st.markdown(f"### *{row['Name']}* by {row['Brand']}")
-            if pd.notna(row["Image URL"]):
-                st.image(row["Image URL"], width=180)
-            st.markdown(highlighted)
-            st.markdown("---")
-    else:
-        st.error("No match found. Try changing the mood or notes!")
+    for _, row in top_results.iterrows():
+        st.markdown(f"### *{row['Name']}* by {row['Brand']}")
+        if pd.notna(row["Image URL"]):
+            st.image(row["Image URL"], width=180)
+        description = row["Description"] or ""
+        st.markdown(highlight_keywords(description, [preferences['mood'], preferences['occasion']] + preferences['notes']))
+        st.markdown("---")
 
-    store_preferences(st.session_state.user_id, str(preferences), ", ".join(results["Name"].head(5).tolist()))
+    store_preferences(
+        st.session_state.user_id, 
+        str(preferences), 
+        ", ".join(top_results["Name"].tolist())
+    )
 
 # Login page
 def show_login():
-    if st.session_state.get("logged_in"):
-        st.session_state.page = "Questionnaire"
-        st.experimental_rerun()
-
-    st.title("🌸 Perfume Recommender - Login")
+    st.title("Login Page")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
@@ -105,30 +114,18 @@ def show_login():
         if user:
             st.session_state.user_id = user[0]
             st.session_state.username = user[1]
+            st.session_state.step = 1
+            st.session_state.answers = {}
+            st.success("Login successful! Redirecting to quiz...")
             st.session_state.logged_in = True
-            st.session_state.page = "Questionnaire"
-            st.experimental_rerun()
         else:
             st.error("Invalid credentials.")
 
-    if st.button("Register"):
-        if username and password:
-            try:
-                register_user(username, password)
-                st.success("Registration successful. Please login.")
-            except:
-                st.error("Username already exists.")
-        else:
-            st.warning("Please fill both fields.")
-
-# Questionnaire flow
+# Questionnaire page
 def show_questionnaire():
-    if 'step' not in st.session_state:
-        st.session_state.step = 1
-    if 'answers' not in st.session_state:
-        st.session_state.answers = {}
+    step = st.session_state.get("step", 1)
 
-    if st.session_state.step == 1:
+    if step == 1:
         st.subheader("Step 1: What's your current vibe?")
         mood = st.radio("", ["Romantic", "Bold", "Fresh", "Mysterious", "Cozy", "Energetic"])
         if st.button("Next ➡"):
@@ -136,7 +133,7 @@ def show_questionnaire():
             st.session_state.step = 2
             st.experimental_rerun()
 
-    elif st.session_state.step == 2:
+    elif step == 2:
         st.subheader("Step 2: What's the occasion?")
         occasion = st.radio("", ["Everyday Wear", "Date Night", "Work", "Party"])
         if st.button("Next ➡"):
@@ -144,19 +141,19 @@ def show_questionnaire():
             st.session_state.step = 3
             st.experimental_rerun()
 
-    elif st.session_state.step == 3:
+    elif step == 3:
         st.subheader("Step 3: What kind of notes do you love?")
-        notes = st.multiselect("Pick a few that speak to your soul 💫",
+        notes = st.multiselect("Pick your fav scent notes 💫", 
                                ["Vanilla", "Oud", "Citrus", "Floral", "Spicy", "Woody", "Sweet", "Musky"])
         if st.button("Get My Recommendations 💖"):
             st.session_state.answers["notes"] = notes
             st.session_state.step = 4
             st.experimental_rerun()
 
-    elif st.session_state.step == 4:
+    elif step == 4:
         show_recommendations()
 
-# DB Viewer (for debug)
+# View DB (debug)
 def view_db():
     conn = create_connection()
     cursor = conn.cursor()
@@ -165,24 +162,34 @@ def view_db():
     cursor.execute("SELECT * FROM history")
     history = cursor.fetchall()
     conn.close()
-    st.subheader("Users Table:")
+    st.subheader("Users Table")
     st.write(users)
-    st.subheader("History Table:")
+    st.subheader("History Table")
     st.write(history)
 
-# Main router
+# Routing logic
 def main():
-    setup_database()
-    if "page" not in st.session_state:
-        st.session_state.page = "Login"
+    initialize_db()
 
-    if st.session_state.page == "Login":
-        show_login()
-    elif st.session_state.page == "Questionnaire":
-        show_questionnaire()
-    elif st.session_state.page == "View Database":
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+
+    page = st.sidebar.radio("Choose a page", ["Login", "Questionnaire", "View Database"])
+
+    if page == "Login":
+        if st.session_state.logged_in:
+            show_questionnaire()
+        else:
+            show_login()
+
+    elif page == "Questionnaire":
+        if st.session_state.logged_in:
+            show_questionnaire()
+        else:
+            st.warning("Please login first.")
+
+    elif page == "View Database":
         view_db()
 
-# Run the app
 if __name__ == "__main__":
     main()
