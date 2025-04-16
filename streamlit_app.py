@@ -6,7 +6,7 @@ import torch
 
 # SQLite DB connection
 def create_connection():
-    conn = sqlite3.connect('perfume_app.db')  # This is your user login database
+    conn = sqlite3.connect('perfume_app.db')
     return conn
 
 # Function to initialize the database
@@ -61,48 +61,39 @@ def store_preferences(user_id, preferences, recommendations):
     conn.commit()
     conn.close()
 
-# Load the perfume dataset (Accessing your provided CSV)
+# Load the perfume dataset
 def load_perfume_data():
-    perfume_df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")  # Access your provided CSV file
+    perfume_df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
     return perfume_df
 
 # AI model for NLP-based recommendations
 def get_recommendations(user_preferences, perfume_df):
-    # Load SentenceTransformer model
     model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
 
-    # Combine all the descriptions and notes for comparison
     perfume_df["combined"] = perfume_df["Description"].fillna("") + " " + perfume_df["Notes"].fillna("")
     
-    # Encode the user preferences (mood, occasion, notes)
     user_input = " ".join(user_preferences)
     user_embedding = model.encode(user_input, convert_to_tensor=True)
     
-    # Encode all perfume descriptions
     perfume_embeddings = model.encode(perfume_df["combined"].tolist(), convert_to_tensor=True)
     
-    # Calculate similarity scores between user input and perfume descriptions
     cosine_scores = util.pytorch_cos_sim(user_embedding, perfume_embeddings)[0]
     
-    # Get the top 5 perfumes based on cosine similarity
     top_results = torch.topk(cosine_scores, k=5)
     
-    # Return top 5 recommendations
     recommended_perfumes = perfume_df.iloc[top_results[1]]
     
     return recommended_perfumes
 
-# Show recommendations with highlighted preferences
+# Show recommendations
 def show_recommendations():
     preferences = st.session_state.answers
     mood = preferences.get("mood")
     occasion = preferences.get("occasion")
     notes = preferences.get("notes")
 
-    # Load the perfume dataset
-    perfume_df = load_perfume_data()  # Access your CSV data here
+    perfume_df = load_perfume_data()
 
-    # Get recommendations based on the AI model
     user_preferences = [mood, occasion] + notes
     recommended_perfumes = get_recommendations(user_preferences, perfume_df)
 
@@ -116,13 +107,11 @@ def show_recommendations():
             st.markdown(highlighted_description)
             st.markdown("---")
     else:
-        st.error("No perfect match found 😢 Try a different mood or notes!")
+        st.error("No perfect match found. Try a different mood or notes!")
 
-    # Store preferences and recommendations
     user_id = st.session_state.user_id
     store_preferences(user_id, str(preferences), ", ".join(recommended_perfumes["Name"].head(5).tolist()))
 
-    # Redirect back to the questionnaire after a delay
     st.experimental_rerun()
 
 # Registration page
@@ -156,8 +145,8 @@ def show_login():
             st.session_state.logged_in = True
             st.session_state.answers = {}
             st.success("Login successful!")
-            st.session_state.step = 1  # Start questionnaire flow
-            st.experimental_rerun()  # Redirect to the questionnaire page
+            st.session_state.step = 1
+            st.experimental_rerun()
         else:
             st.error("Invalid credentials, please try again.")
 
