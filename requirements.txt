@@ -3,3 +3,4 @@ bcrypt
 pandas
 chardet
 sentence-transformers
+werkzeug
