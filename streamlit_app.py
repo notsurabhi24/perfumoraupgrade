@@ -37,8 +37,12 @@ def initialize_db():
 def register_user(username, password):
     conn = create_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
-    conn.commit()
+    try:
+        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+        conn.commit()
+        st.success("Registration successful!")
+    except sqlite3.IntegrityError:
+        st.error("Username already exists. Please choose another.")
     conn.close()
 
 # Authenticate a user
@@ -118,8 +122,22 @@ def show_login():
             st.session_state.answers = {}
             st.success("Login successful! Redirecting to quiz...")
             st.session_state.logged_in = True
+            st.experimental_rerun()  # Now works after login
         else:
             st.error("Invalid credentials.")
+
+# Registration page
+def show_registration():
+    st.title("Registration Page")
+    username = st.text_input("Choose a Username")
+    password = st.text_input("Choose a Password", type="password")
+    confirm_password = st.text_input("Confirm Password", type="password")
+
+    if st.button("Register"):
+        if password == confirm_password:
+            register_user(username, password)
+        else:
+            st.error("Passwords do not match. Please try again.")
 
 # Questionnaire page
 def show_questionnaire():
@@ -174,13 +192,16 @@ def main():
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
 
-    page = st.sidebar.radio("Choose a page", ["Login", "Questionnaire", "View Database"])
+    page = st.sidebar.radio("Choose a page", ["Login", "Register", "Questionnaire", "View Database"])
 
     if page == "Login":
         if st.session_state.logged_in:
             show_questionnaire()
         else:
             show_login()
+
+    elif page == "Register":
+        show_registration()
 
     elif page == "Questionnaire":
         if st.session_state.logged_in:
