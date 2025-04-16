@@ -2,30 +2,32 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
-import torch
+import os
 
 # SQLite DB connection
 def create_connection():
     conn = sqlite3.connect('perfume_app.db')
     return conn
 
-# Function to initialize the database
-def initialize_db():
+# Function to create database tables
+def create_database():
     conn = create_connection()
     cursor = conn.cursor()
     
+    # Create the 'users' table for storing login credentials
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        username TEXT UNIQUE,
-                        password TEXT)''')
-
+                        username TEXT NOT NULL,
+                        password TEXT NOT NULL)''')
+    
+    # Create the 'history' table to store user preferences and recommendations
     cursor.execute('''CREATE TABLE IF NOT EXISTS history (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id INTEGER,
                         preferences TEXT,
                         recommendations TEXT,
                         FOREIGN KEY(user_id) REFERENCES users(id))''')
-
+    
     conn.commit()
     conn.close()
 
@@ -33,15 +35,9 @@ def initialize_db():
 def register_user(username, password):
     conn = create_connection()
     cursor = conn.cursor()
-    try:
-        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        st.error("Username already exists.")
-        conn.close()
-        return False
+    cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+    conn.commit()
     conn.close()
-    return True
 
 # Function to authenticate a user
 def authenticate_user(username, password):
@@ -56,82 +52,61 @@ def authenticate_user(username, password):
 def store_preferences(user_id, preferences, recommendations):
     conn = create_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO history (user_id, preferences, recommendations) VALUES (?, ?, ?)", 
-                   (user_id, preferences, recommendations))
-    conn.commit()
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    
+    if user:
+        cursor.execute("INSERT INTO history (user_id, preferences, recommendations) VALUES (?, ?, ?)", 
+                       (user_id, preferences, recommendations))
+        conn.commit()
     conn.close()
 
-# Load the perfume dataset
+# Function to load the perfume data from CSV
 def load_perfume_data():
-    perfume_df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
-    return perfume_df
+    df = pd.read_csv("final_perfume_data.csv", encoding="ISO-8859-1")
+    df["combined"] = df["Description"].fillna("") + " " + df["Notes"].fillna("")
+    return df
 
-# AI model for NLP-based recommendations
-def get_recommendations(user_preferences, perfume_df):
-    model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+# Function to perform AI-based perfume recommendation using Sentence Transformers
+def recommend_perfume(preferences, df):
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    query = " ".join(preferences.values())
+    
+    query_embedding = model.encode(query, convert_to_tensor=True)
+    perfume_embeddings = model.encode(df["combined"].tolist(), convert_to_tensor=True)
+    
+    cosine_scores = util.pytorch_cos_sim(query_embedding, perfume_embeddings)[0]
+    top_results = cosine_scores.topk(5)
+    
+    recommendations = []
+    for score, idx in zip(top_results[0], top_results[1]):
+        recommendations.append((df.iloc[idx]["Name"], df.iloc[idx]["Brand"], score.item()))
+    
+    return recommendations
 
-    perfume_df["combined"] = perfume_df["Description"].fillna("") + " " + perfume_df["Notes"].fillna("")
-    
-    user_input = " ".join(user_preferences)
-    user_embedding = model.encode(user_input, convert_to_tensor=True)
-    
-    perfume_embeddings = model.encode(perfume_df["combined"].tolist(), convert_to_tensor=True)
-    
-    cosine_scores = util.pytorch_cos_sim(user_embedding, perfume_embeddings)[0]
-    
-    top_results = torch.topk(cosine_scores, k=5)
-    
-    recommended_perfumes = perfume_df.iloc[top_results[1]]
-    
-    return recommended_perfumes
-
-# Show recommendations
+# Show the AI-based perfume recommendations
 def show_recommendations():
     preferences = st.session_state.answers
     mood = preferences.get("mood")
     occasion = preferences.get("occasion")
     notes = preferences.get("notes")
 
-    perfume_df = load_perfume_data()
+    df = load_perfume_data()
+    recommendations = recommend_perfume(preferences, df)
 
-    user_preferences = [mood, occasion] + notes
-    recommended_perfumes = get_recommendations(user_preferences, perfume_df)
-
-    if not recommended_perfumes.empty:
-        for _, row in recommended_perfumes.iterrows():
-            description = row["Description"]
-            highlighted_description = highlight_keywords(description, [mood, occasion] + notes)
-            st.markdown(f"### *{row['Name']}* by {row['Brand']}")
-            if pd.notna(row["Image URL"]):
-                st.image(row["Image URL"], width=180)
-            st.markdown(highlighted_description)
-            st.markdown("---")
+    if recommendations:
+        for name, brand, score in recommendations:
+            st.markdown(f"### *{name}* by {brand} - Score: {score:.2f}")
     else:
-        st.error("No perfect match found. Try a different mood or notes!")
+        st.error("No recommendations found!")
 
+    # Store preferences and recommendations in the database
     user_id = st.session_state.user_id
-    store_preferences(user_id, str(preferences), ", ".join(recommended_perfumes["Name"].head(5).tolist()))
+    store_preferences(user_id, str(preferences), ", ".join([name for name, _, _ in recommendations]))
 
     st.experimental_rerun()
 
-# Registration page
-def show_registration():
-    st.title("Register a New Account")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    confirm_password = st.text_input("Confirm Password", type="password")
-    
-    if st.button("Register"):
-        if password == confirm_password:
-            if register_user(username, password):
-                st.success("Registration successful! Please log in.")
-                st.session_state.logged_in = False
-            else:
-                st.error("Username already exists.")
-        else:
-            st.error("Passwords do not match.")
-
-# Login page
+# Function for login page
 def show_login():
     st.title("Login Page")
     username = st.text_input("Username")
@@ -142,15 +117,28 @@ def show_login():
         if user:
             st.session_state.user_id = user[0]
             st.session_state.username = user[1]
-            st.session_state.logged_in = True
-            st.session_state.answers = {}
-            st.success("Login successful!")
             st.session_state.step = 1
-            st.experimental_rerun()
+            st.session_state.answers = {}
+            st.success("Login successful! Redirecting to quiz...")
+            st.experimental_rerun()  # Now works after login
         else:
             st.error("Invalid credentials, please try again.")
 
-# Questionnaire for user preferences
+# Function for registration page
+def show_registration():
+    st.title("Register Page")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    confirm_password = st.text_input("Confirm Password", type="password")
+
+    if st.button("Register"):
+        if password != confirm_password:
+            st.error("Passwords do not match!")
+        else:
+            register_user(username, password)
+            st.success("Registration successful! Please log in.")
+
+# Function to show the questionnaire page
 def show_questionnaire():
     if 'step' not in st.session_state:
         st.session_state.step = 1
@@ -179,32 +167,24 @@ def show_questionnaire():
                                ["Vanilla", "Oud", "Citrus", "Floral", "Spicy", "Woody", "Sweet", "Musky"])
         if st.button("Get My Recommendations 💖"):
             st.session_state.answers["notes"] = notes
-            st.session_state.step = 4
-            st.experimental_rerun()
+            show_recommendations()
 
 # Main app routing logic
 def main():
-    initialize_db()
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
+    # Create database tables on app startup (just once)
+    create_database()
 
     page = st.sidebar.radio("Choose a page", ["Login", "Register", "Questionnaire"])
 
     if page == "Login":
-        if not st.session_state.logged_in:
-            show_login()
-        else:
-            st.write(f"Hello {st.session_state.username}, you are already logged in.")
-            show_questionnaire()
-
+        show_login()
     elif page == "Register":
         show_registration()
-
     elif page == "Questionnaire":
-        if st.session_state.logged_in:
-            show_questionnaire()
-        else:
+        if 'user_id' not in st.session_state:
             st.warning("Please log in first.")
+        else:
+            show_questionnaire()
 
 if __name__ == "__main__":
     main()
