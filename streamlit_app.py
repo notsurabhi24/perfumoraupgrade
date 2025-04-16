@@ -108,7 +108,10 @@ def show_login():
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
-    if st.button("Login"):
+    login_clicked = st.button("Login")
+    register_clicked = st.button("Register")
+
+    if login_clicked:
         user = authenticate_user(username, password)
         if user:
             st.session_state.user_id = user[0]
@@ -116,13 +119,12 @@ def show_login():
             st.session_state.logged_in = True
             st.session_state.step = 1
             st.session_state.answers = {}
-            st.success("Login successful! Redirecting...")
             st.session_state.page = "Questionnaire"
-            st.experimental_rerun()
+            st.experimental_rerun()  # safe here because it’s the last thing done
         else:
             st.error("Invalid credentials, please try again.")
 
-    if st.button("Register"):
+    elif register_clicked:
         if username and password:
             register_user(username, password)
             st.success("User registered. Please log in.")
