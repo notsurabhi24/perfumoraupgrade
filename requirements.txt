@@ -2,3 +2,4 @@ streamlit
 bcrypt
 pandas
 chardet
+sentence-transformers
